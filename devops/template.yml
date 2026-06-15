@@ -1,0 +1,271 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cognito Protected Profile API
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: secure-profile-api
+  
+  CreatedBy:
+    Type: String
+    Default: "Kumaresan K"
+
+  CreatedFor:
+    Type: String
+    Default: "Learning/Testing"
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 10
+    Tags:
+      Project: !Ref ProjectName
+      CreatedBy: !Ref CreatedBy
+      CreatedFor: !Ref CreatedFor
+
+Resources:
+
+  # =========================
+  # S3 Bucket
+  # =========================
+
+  ProfileBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-${AWS::AccountId}'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: CreatedBy
+          Value: !Ref CreatedBy
+        - Key: CreatedFor
+          Value: !Ref CreatedFor
+
+  # =========================
+  # Cognito User Pool
+  # =========================
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-${Environment}-users'
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+
+  # =========================
+  # Cognito App Client
+  # =========================
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: web-client
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+
+  # =========================
+  # API Gateway
+  # =========================
+
+  ProfileApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-api'
+      StageName: !Ref Environment
+      OpenApiVersion: 3.0.1
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+      Cors:
+        AllowMethods: "'GET', 'POST', 'PUT', 'DELETE'"
+        AllowHeaders: "'Authorization,Content-Type'"
+        AllowOrigin: "'*'"
+
+  # =========================
+  # Lambda
+  # =========================
+
+  ProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-profile-function'
+      CodeUri: ./src/profile
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ProfileBucket
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub '${ProfileBucket.Arn}/*'
+      Events:
+        GetProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /profile
+            Method: GET
+
+  CreateMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-create-message-function'
+      CodeUri: ./src/create_message
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ProfileBucket
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - !Sub '${ProfileBucket.Arn}/*'
+      Events:
+        CreateMessage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /message
+            Method: POST
+
+  ListMessagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-list-messages-function'
+      CodeUri: ./src/list_messages
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ProfileBucket
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub '${ProfileBucket.Arn}/*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !GetAtt ProfileBucket.Arn
+      Events:
+        ListMessages:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /messages
+            Method: GET
+  
+  GetMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-get-message-function'
+      CodeUri: ./src/get_message
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ProfileBucket
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub '${ProfileBucket.Arn}/*'
+      Events:
+        GetMessageById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /messages/{id}
+            Method: GET
+
+  DeleteMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-delete-message-function'
+      CodeUri: ./src/delete_message
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ProfileBucket
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                - !Sub '${ProfileBucket.Arn}/*'
+      Events:
+        DeleteMessageById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /messages/{id}
+            Method: DELETE
+
+Outputs:
+
+  UserPoolId:
+    Description: Cognito User Pool Id
+    Value: !Ref UserPool
+
+  UserPoolClientId:
+    Description: Cognito App Client Id
+    Value: !Ref UserPoolClient
+
+  ApiId:
+    Description: API Gateway Id
+    Value: !Ref ProfileApi
+
+  ApiEndpoint:
+    Description: Protected API Endpoint
+    Value: !Sub 'https://${ProfileApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/profile'
